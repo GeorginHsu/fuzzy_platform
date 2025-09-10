@@ -29,7 +29,7 @@
       if (btn1) btn1.disabled = !u;
       if (btn2) btn2.disabled = !u;
     }
-    // Accept a default name so Switch User can prefill with current user
+    // Support default value for prompt (used by Switch User)
     function ask(defaultName){
       var u = (prompt('Please enter your username:', defaultName || '') || '').trim();
       if (u) setUser(u);
@@ -37,14 +37,26 @@
 
     // Init: if no username, prompt immediately; otherwise display it
     var saved = localStorage.getItem('username') || '';
-    if (!saved) { ask(''); } else { setUser(saved); }
+    if (!saved) {
+      ask('');
+      saved = localStorage.getItem('username') || '';
+    } else {
+      setUser(saved);
+    }
+    // Record the first username for this page session (initial login name)
+    if (!sessionStorage.getItem('username_initial') && saved) {
+      sessionStorage.setItem('username_initial', saved);
+    }
 
-    // Bind "Switch User" button (prefill with current user; do not clear first)
+    // Bind "Switch User" button
     document.addEventListener('DOMContentLoaded', function(){
       var sw = document.getElementById('btn-switch-user');
       if (sw) sw.addEventListener('click', function(){
-        var curr = localStorage.getItem('username') || '';
-        ask(curr); // prefill prompt with current username
+        // Use the initial username (when first logged in) as the default value
+        var firstLogin = sessionStorage.getItem('username_initial') || '';
+        localStorage.removeItem('username');
+        setUser('');
+        ask(firstLogin);
       });
     });
 
