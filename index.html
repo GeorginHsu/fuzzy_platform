@@ -29,36 +29,47 @@
       if (btn1) btn1.disabled = !u;
       if (btn2) btn2.disabled = !u;
     }
+
+    // 统一从本地读取“已有的用户名”（优先 localStorage，也兼容常见键名与 cookie）
+    function getLocalUsername() {
+      var u =
+        localStorage.getItem('username') ||
+        localStorage.getItem('user') ||
+        localStorage.getItem('uname') ||
+        '';
+      if (!u) {
+        // 尝试从 cookie 兜底（如有其他页面写入了 cookie）
+        var m = document.cookie.match(/(?:^|;)\s*username=([^;]+)/);
+        if (m) u = decodeURIComponent(m[1]);
+      }
+      return (u || '').trim();
+    }
+
+    // 支持传入默认值（用于 Switch User 的初始值）
     function ask(defaultName){
       var u = (prompt('Please enter your username:', defaultName || '') || '').trim();
-      if (u) {
-        setUser(u);
-        // 首次设置时记录“开始登录网站时的值”（仅本会话）
-        if (!sessionStorage.getItem('username_initial')) {
-          sessionStorage.setItem('username_initial', u);
-        }
-      }
+      if (u) setUser(u);
     }
 
-    // Init: 如果本地没有用户名，就询问一次；有的话直接显示
-    var saved = localStorage.getItem('username') || '';
-    if (!saved) {
-      ask('');
-      saved = localStorage.getItem('username') || '';
-    } else {
+    // Init：平台最开始“读取本地的 username”
+    var saved = getLocalUsername();
+    if (saved) {
       setUser(saved);
-      // 若尚未记录初始用户名，则以当前已保存的用户名作为初始值
-      if (!sessionStorage.getItem('username_initial') && saved) {
-        sessionStorage.setItem('username_initial', saved);
-      }
+      // 记录“本会话初始用户名”为本地已有值
+      sessionStorage.setItem('username_initial', saved);
+    } else {
+      // 本地没有就询问一次，并把第一次输入视为会话初始
+      ask('');
+      var now = localStorage.getItem('username') || '';
+      if (now) sessionStorage.setItem('username_initial', now);
     }
 
-    // 绑定 “Switch User”：初始值固定为“开始登录网站时的值”，但可改为公户等任意名称
+    // 绑定 Switch User：初始值为“开始登录网站时”的本地用户名；用户仍可改为公户等
     document.addEventListener('DOMContentLoaded', function(){
       var sw = document.getElementById('btn-switch-user');
       if (sw) sw.addEventListener('click', function(){
-        var firstLogin = sessionStorage.getItem('username_initial') || '';
-        ask(firstLogin); // 预填为首次登录名，用户可修改
+        var firstLogin = sessionStorage.getItem('username_initial') || getLocalUsername() || '';
+        ask(firstLogin);
       });
     });
 
