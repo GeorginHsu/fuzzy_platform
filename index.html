@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <title>Fuzzy QA Annotator</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --accent: #2563eb;
+      --ok: #16a34a;
+      --warn: #ea580c;
+      --bad: #dc2626;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    header .title { font-weight: 700; margin-right: auto; }
+    header .userbar { display: flex; align-items: center; gap: 10px; }
+    header .userbar b { color: var(--accent); }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    main { max-width: 1100px; margin: 20px auto; padding: 0 16px 60px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin: 12px 0;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+    }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .muted { color: var(--muted); }
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    }
+    @media (max-width: 920px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .image-wrap { display: flex; flex-direction: column; gap: 8px; }
+    .image-wrap img {
+      width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border);
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    thead th {
+      text-align: left;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 8px;
+      background: #fafafa;
+    }
+    tbody td {
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      padding: 10px 8px;
+    }
+    select, input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      font-size: 14px;
+    }
+    .score-good { color: var(--ok); font-weight: 600; }
+    .score-warn { color: var(--warn); font-weight: 600; }
+    .score-bad { color: var(--bad); font-weight: 600; }
+    .hidden { display: none !important; }
+    #toast {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      background: #111827; color: #fff;
+      padding: 10px 14px; border-radius: 999px; font-size: 14px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+    }
+    .hint {
+      border-left: 4px solid #111827;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">Fuzzy QA Annotator</div>
+    <div class="userbar">
+      <span>Current user: <b id="uname">(not set)</b></span>
+      <button id="btn-switch-user" type="button" title="Switch to a different username">Switch user</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Scoring hint (always visible) -->
+    <div class="card hint" role="note" aria-live="polite">
+      <b>Scoring reminder:</b>
+      <span class="muted">test model <u>wrong</u> = <span class="score-bad">+1</span>;
+        <u>correct</u> = <span class="score-good">0</span>;
+        <u>unreasonable question</u> = <span class="score-warn">-1</span>.</span>
+    </div>
+
+    <div class="card controls">
+      <button id="btn-load" type="button">Load a sample</button>
+      <button id="btn-submit" type="button" disabled>Submit ratings</button>
+      <span class="muted">Sample ID: <b id="sample-id">—</b></span>
+      <span class="muted">Image: <b id="image-rel">—</b></span>
+    </div>
+
+    <div class="grid">
+      <!-- Image section -->
+      <section id="image-section" class="card image-wrap hidden" aria-labelledby="image-title">
+        <h3 id="image-title" style="margin:0 0 6px 0;">Image</h3>
+        <img id="img" src="" alt="Sample image" />
+      </section>
+
+      <!-- QA table section -->
+      <section id="qa-section" class="card hidden" aria-labelledby="qa-title">
+        <h3 id="qa-title" style="margin:0 0 10px 0;">Questions & Answers</h3>
+        <div class="table-wrap">
+          <table id="qa-table" aria-describedby="qa-desc">
+            <caption id="qa-desc" class="visually-hidden" style="display:none;">
+              Rate each question: +1=wrong by test model, 0=correct, -1=unreasonable question.
+            </caption>
+            <thead>
+              <tr>
+                <th style="width:44px;">#</th>
+                <th style="width:150px;">Dimension</th>
+                <th>Question</th>
+                <th style="width:220px;">Model Answer</th>
+                <th style="width:160px;">Score</th>
+                <th style="width:220px;">Comment</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="hidden" role="status" aria-live="polite"></div>
+
+  <!-- Load BACKEND_BASE from ./config.json (no caching) -->
+  <script>
+    (async () => {
+      try {
+        const r = await fetch('./config.json', { cache: 'no-store' });
+        if (r.ok) {
+          const cfg = await r.json();
+          window.BACKEND_BASE =
+            cfg.BACKEND_BASE || cfg.backend_base || cfg.base || cfg.api_base || "";
+        }
+      } catch (e) {
+        console.warn("Failed to load config.json", e);
+      }
+    })();
+  </script>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+    const tbody = $("#qa-table tbody");
+    let CURRENT = null;
+
+    /* ===== Username state (centralized) ===== */
+    function getUsername() { return localStorage.getItem("username") || ""; }
+    function setUsername(u) {
+      const v = (u || "").trim();
+      if (!v) return;
+      localStorage.setItem("username", v);
+      const el = $("#uname");
+      if (el) el.textContent = v;
+    }
+    function switchUser() {
+      const curr = getUsername();
+      const u = (prompt("Switch user: enter username", curr) || "").trim();
+      if (!u || u === curr) return;
+      setUsername(u);
+      toast(`Switched to ${u}`);
+    }
+
+    /* ===== Bootstrap username once, then reflect to UI ===== */
+    (function bootstrapUsername() {
+      let u = getUsername();
+      if (!u) {
+        u = (prompt("Please enter your username:", "") || "").trim();
+        if (u) setUsername(u);
+      } else {
+        setUsername(u); // reflect to UI on reload
+      }
+    })();
+
+    function toast(msg) {
+      const el = $("#toast");
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.remove("hidden");
+      setTimeout(() => el.classList.add("hidden"), 2000);
+    }
+
+    async function ensureUsername() {
+      let u = getUsername();
+      if (u) return true;
+      u = (prompt("Please enter your username:", "") || "").trim();
+      if (!u) { toast("Username not set"); return false; }
+      setUsername(u);
+      return true;
+    }
+
+    // Always attach username to requests
+    function headers(json = false) {
+      const h = {};
+      if (json) h["Content-Type"] = "application/json";
+      const u = getUsername();
+      if (u) h["X-Username"] = u;
+      return h;
+    }
+
+    async function waitForBackendBase(timeout = 10000) {
+      const t0 = Date.now();
+      while (!window.BACKEND_BASE) {
+        await new Promise(r => setTimeout(r, 50));
+        if (Date.now() - t0 > timeout) throw new Error("BACKEND_BASE not loaded");
+      }
+    }
+
+    async function loadSample() {
+      if (!await ensureUsername()) return;
+      $("#btn-load").disabled = true;
+      $("#btn-submit").disabled = true;
+      tbody.innerHTML = "";
+      try {
+        await waitForBackendBase();
+        const url = new URL("/api/sample", window.BACKEND_BASE);
+        const res = await fetch(url, { method: "GET", headers: headers() });
+        if (!res.ok) throw new Error(`request failed: ${res.status}`);
+        const data = await res.json();
+        CURRENT = data;
+
+        $("#image-section").classList.remove("hidden");
+        $("#qa-section").classList.remove("hidden");
+        $("#img").src = new URL(data.image_web_url, window.BACKEND_BASE).toString();
+        $("#sample-id").textContent = data.sample_id || "—";
+        $("#image-rel").textContent = data.image_relpath || "—";
+
+        data.qas.forEach((qa, idx) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${idx + 1}</td>
+            <td>${qa.dimension || "—"}</td>
+            <td>${qa.question}</td>
+            <td>${qa.answer ?? "—"}</td>
+            <td>
+              <select class="score-select" data-qid="${qa.id}">
+                <option value="">—</option>
+                <option value="1">+1 Wrong</option>
+                <option value="0">0 Correct</option>
+                <option value="-1">-1 Unreasonable</option>
+              </select>
+            </td>
+            <td><input type="text" placeholder="Optional comment" data-cmt="${qa.id}" /></td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        $("#btn-submit").disabled = false;
+      } catch (err) {
+        console.error(err);
+        toast("Failed to load");
+      } finally {
+        $("#btn-load").disabled = false;
+      }
+    }
+
+    async function submitRatings() {
+      if (!await ensureUsername()) return;
+      if (!CURRENT) return toast("Please load a sample first");
+      const ratings = [];
+      tbody.querySelectorAll(".score-select").forEach(sel => {
+        const val = sel.value;
+        if (val === "") return;
+        const qid = sel.getAttribute("data-qid");
+        const cmtEl = tbody.querySelector(`input[data-cmt="${qid}"]`);
+        const cmt = cmtEl ? cmtEl.value : "";
+        ratings.push({ id: qid, score: Number(val), comment: cmt || undefined });
+      });
+      if (!ratings.length) return toast("Please rate at least one question");
+      $("#btn-submit").disabled = true;
+      try {
+        await waitForBackendBase();
+        const url = new URL("/api/rating", window.BACKEND_BASE);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: headers(true),
+          body: JSON.stringify({ sample_id: CURRENT.sample_id, ratings })
+        });
+        if (!res.ok) throw new Error(`rating failed: ${res.status}`);
+        toast("Ratings submitted, thank you!");
+      } catch (err) {
+        console.error(err);
+        toast("Submission failed");
+      } finally {
+        $("#btn-submit").disabled = false;
+      }
+    }
+
+    // Bind buttons
+    $("#btn-switch-user")?.addEventListener("click", switchUser);
+    $("#btn-load").addEventListener("click", loadSample);
+    $("#btn-submit").addEventListener("click", submitRatings);
+  </script>
+</body>
+</html>
