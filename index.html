@@ -20,8 +20,19 @@
   <!-- Note: this script must run after app.js to override its authHeaders -->
   <script defer>
   (function () {
-    function getUsername(){
-      return localStorage.getItem('username') || '';
+    // --- helpers for username state ---
+    function getLocalUsername(){
+      // 兼容多种 key 与 cookie
+      var u =
+        localStorage.getItem('username') ||
+        localStorage.getItem('user') ||
+        localStorage.getItem('uname') ||
+        '';
+      if (!u) {
+        var m = document.cookie.match(/(?:^|;)\s*username=([^;]+)/);
+        if (m) u = decodeURIComponent(m[1]);
+      }
+      return (u || '').trim();
     }
     function setUser(u){
       localStorage.setItem('username', u);
@@ -32,30 +43,40 @@
       if (btn1) btn1.disabled = !u;
       if (btn2) btn2.disabled = !u;
     }
-    // Prompt; default prefilled (used for Switch User and first-time)
+    function getUsername(){ return localStorage.getItem('username') || ''; }
+
+    // Prompt（首次或切换时用），支持默认值预填
     function ask(defaultName){
       var u = (prompt('Please enter your username:', defaultName || '') || '').trim();
       if (u) setUser(u);
     }
 
-    // Init: read local username first; if absent, prompt once; otherwise reflect to UI
-    var saved = getUsername();
-    if (!saved) { ask(''); } else { setUser(saved); }
+    // --- init: 优先读取“本地已存在的 username”，没有才询问 ---
+    var saved = getLocalUsername();
+    if (saved) {
+      setUser(saved);
+    } else {
+      ask('');
+    }
 
-    // Bind "Switch User" button (prefill with current username; user can change to public account, etc.)
+    // --- Switch User：默认值为当前本地用户名（可改为公户等） ---
     document.addEventListener('DOMContentLoaded', function(){
       var sw = document.getElementById('btn-switch-user');
       if (sw) sw.addEventListener('click', function(){
-        var curr = getUsername();
+        var curr = getLocalUsername();
         ask(curr);
       });
+
+      // 再次同步一遍（确保首屏 DOM 绘制后也更新了 UI）
+      var now = getLocalUsername();
+      if (now) setUser(now);
     });
 
-    // Override app.js authHeaders to always include X-Username
+    // 覆盖 app.js 的 authHeaders，始终附带 X-Username
     var orig = window.authHeaders;
     window.authHeaders = function(){
       var h = orig ? orig() : { "Content-Type": "application/json" };
-      var u = getUsername();
+      var u = getLocalUsername();
       if (u) h['X-Username'] = u;
       return h;
     };
