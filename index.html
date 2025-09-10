@@ -29,7 +29,7 @@
       if (btn1) btn1.disabled = !u;
       if (btn2) btn2.disabled = !u;
     }
-    // Use current username as the default value in the prompt
+    // Accept a default name so Switch User can prefill with current user
     function ask(defaultName){
       var u = (prompt('Please enter your username:', defaultName || '') || '').trim();
       if (u) setUser(u);
