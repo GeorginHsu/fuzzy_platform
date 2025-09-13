@@ -49,6 +49,87 @@ async function waitForBackendBase(timeout = 10000) {
   }
 }
 
+// === 预热当前展示图，避免白屏 ===
+async function prewarmCurrentImage(urlStr) {
+  await new Promise((resolve) => {
+    const pre = new Image();
+    pre.onload = pre.onerror = resolve;
+    pre.decoding = "async";
+    pre.src = urlStr;
+  });
+}
+
+// === 持续预热所有“未使用”的图片（不依赖任何进度条元素） ===
+const WARM = { done: 0, total: 0, seen: new Set(), timer: null };
+
+async function fetchWarmTargets(limit) {
+  await waitForBackendBase();
+  const url = new URL("/api/cache/images", window.BACKEND_BASE);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("rand", "1");
+  url.searchParams.set("exclude_used", "1"); // 关键：排除 logs 里已用图片
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.images || []).map(x =>
+    new URL(x.image_web_url, window.BACKEND_BASE).toString()
+  );
+}
+
+function preloadOne(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = img.onerror = () => { WARM.done++; resolve(); };
+    img.decoding = "async";
+    img.fetchPriority = "low";
+    img.referrerPolicy = "no-referrer";
+    img.src = src;
+  });
+}
+
+async function warmLoop({ batch = 200, concurrency = 6, intervalMs = 10000 } = {}) {
+  try {
+    await waitForBackendBase();
+    // 初始化总数（仅一次）
+    if (!WARM.total) {
+      const statsUrl = new URL("/api/cache/stats", window.BACKEND_BASE);
+      statsUrl.searchParams.set("exclude_used", "1");
+      const rs = await fetch(statsUrl);
+      if (rs.ok) {
+        const s = await rs.json();
+        WARM.total = s.images || s.count || 0;
+      }
+      console.log("[warm] total images to warm:", WARM.total);
+    }
+
+    const targets = await fetchWarmTargets(batch);
+    const fresh = targets.filter(u => !WARM.seen.has(u));
+    fresh.forEach(u => WARM.seen.add(u));
+
+    let i = 0;
+    const workers = Array.from({ length: Math.min(concurrency, Math.max(1, fresh.length)) }, async () => {
+      while (i < fresh.length) {
+        const idx = i++;
+        await preloadOne(fresh[idx]);
+      }
+    });
+    await Promise.all(workers);
+  } catch (e) {
+    console.warn("warmLoop error", e);
+  } finally {
+    if (!WARM.total || WARM.done < WARM.total) {
+      WARM.timer = setTimeout(() => warmLoop({ batch, concurrency, intervalMs }), intervalMs);
+    } else {
+      console.log("[warm] done:", WARM.done, "/", WARM.total);
+    }
+  }
+}
+
+// 页面加载后启动持续预热
+document.addEventListener("DOMContentLoaded", () => {
+  warmLoop({ batch: 200, concurrency: 6, intervalMs: 10000 });
+});
+
 async function loadSample() {
   if (!await ensureUsername()) return;
   $("#btn-load").disabled = true;
@@ -62,13 +143,13 @@ async function loadSample() {
     const data = await res.json();
     CURRENT = data;
 
-    const imgUrl = new URL(data.image_web_url, window.BACKEND_BASE).toString();
-    await prewarmCurrentImage(imgUrl);   // ← 新增：先预热这一张
-    $("#img").src = imgUrl;              // ← 原来的赋值行改成用 imgUrl
-
     $("#image-section").classList.remove("hidden");
     $("#qa-section").classList.remove("hidden");
-    // $("#img").src = new URL(data.image_web_url, window.BACKEND_BASE).toString();
+
+    const imgUrl = new URL(data.image_web_url, window.BACKEND_BASE).toString();
+    await prewarmCurrentImage(imgUrl);                // 先把当前图读进缓存
+    $("#img").src = imgUrl;                           // 再显示，基本秒显
+
     $("#sample-id").textContent = data.sample_id;
     $("#image-rel").textContent = data.image_relpath;
 
@@ -82,9 +163,9 @@ async function loadSample() {
         <td>
           <select class="score-select" data-qid="${qa.id}">
             <option value="">—</option>
-            <option value="1">+1 Good</option>
-            <option value="0">0 Neutral</option>
-            <option value="-1">-1 Bad</option>
+            <option value="1">+1 test model wrong</option>
+            <option value="0">0 test model correct</option>
+            <option value="-1">-1 unreasonable question</option>
           </select>
         </td>
         <td><input type="text" placeholder="Optional comment" data-cmt="${qa.id}" /></td>
@@ -132,96 +213,6 @@ async function submitRatings() {
   }
 }
 
-// 只绑定现有按钮（你的 HTML 没有登录表单）
+// 事件绑定
 $("#btn-load").addEventListener("click", loadSample);
 $("#btn-submit").addEventListener("click", submitRatings);
-
-
-// ===== 持续预热图片（带进度） =====
-const WARM = { warmed: new Set(), done: 0, total: 0, timer: null };
-
-function updateWarmUI() {
-  const bar = document.getElementById('preheat-bar');
-  const txt = document.getElementById('preheat-text');
-  if (!bar || !txt) return;
-  const total = WARM.total || Math.max(WARM.done, 1);
-  bar.max = total;
-  bar.value = Math.min(WARM.done, total);
-  txt.textContent = total ? `${WARM.done} / ${total}` : `${WARM.done}`;
-}
-
-async function fetchWarmTargets(limit) {
-  const url = new URL("/api/cache/images", window.BACKEND_BASE);
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("rand", "1");
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error("images list failed");
-  const data = await res.json();
-  return (data.images || []).map(x =>
-    new URL(x.image_web_url, window.BACKEND_BASE).toString()
-  );
-}
-
-function preloadOne(url) {
-  return new Promise(resolve => {
-    const img = new Image();
-    img.decoding = "async";
-    img.fetchPriority = "low";
-    img.referrerPolicy = "no-referrer";
-    img.onload = img.onerror = () => { WARM.done++; updateWarmUI(); resolve(); };
-    img.src = url;
-  });
-}
-
-async function warmLoop({ batch = 200, concurrency = 6, intervalMs = 10000 } = {}) {
-  try {
-    // 第一次尝试拿总数（需要后端有 /api/cache/stats）
-    if (!WARM.total) {
-      try {
-        const s = await fetch(new URL("/api/cache/stats", window.BACKEND_BASE));
-        if (s.ok) {
-          const d = await s.json();
-          WARM.total = d.images || d.count || 0;
-        }
-      } catch {}
-      updateWarmUI();
-    }
-
-    const targets = await fetchWarmTargets(batch);
-    const fresh = targets.filter(u => !WARM.warmed.has(u));
-    fresh.forEach(u => WARM.warmed.add(u));
-
-    let idx = 0;
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (idx < fresh.length) {
-        const i = idx++;
-        await preloadOne(fresh[i]);
-      }
-    });
-    await Promise.all(workers);
-  } catch (e) {
-    console.warn("warmLoop error", e);
-  } finally {
-    if (!WARM.total || WARM.done < WARM.total) {
-      WARM.timer = setTimeout(() => warmLoop({ batch: 200, concurrency: 6, intervalMs }), intervalMs);
-    } else {
-      const txt = document.getElementById('preheat-text');
-      if (txt) txt.textContent += " ✓";
-    }
-  }
-}
-
-// 页面加载后启动持续预热
-document.addEventListener("DOMContentLoaded", () => {
-  warmLoop({ batch: 200, concurrency: 6, intervalMs: 10000 });
-});
-
-// （可选）在展示前先把当前图预热，避免白屏
-async function prewarmCurrentImage(urlStr) {
-  await new Promise(resolve => {
-    const pre = new Image();
-    pre.onload = pre.onerror = resolve;
-    pre.decoding = "async";
-    pre.src = urlStr;
-  });
-}
