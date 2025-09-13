@@ -18,13 +18,6 @@
   <script defer src="config.js"></script>
   <script defer src="app.js"></script>
   <!-- Note: this script must run after app.js to override its authHeaders -->
-
-  <div id="preheat" class="preheat" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
-    <span>图片缓存：</span>
-    <progress id="preheat-bar" max="100" value="0" style="width:240px;height:10px;"></progress>
-    <span id="preheat-text">0 / 0</span>
-  </div>
-
   <script defer>
   (function () {
     // --- helpers for username state ---
